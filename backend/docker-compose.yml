@@ -1,0 +1,9 @@
+services:
+  db:
+    image: postgresql
+    volumes:
+      - "/var/rusty-dungeon/db:"
+    ports:
+      - "5432:5432"
+  api:
+    build: .
