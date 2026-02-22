@@ -1,7 +1,29 @@
 Game Summary:
-    Dungeon crawler, get coins depending on monsters killed, buy item upgrades, go again.
+    Dungeon crawler, get coins depending on monsters killed, buy upgrades, go again.
 
 Things to learn:
     - SQL for DB
     - Rust for frontend
     - Go for backend
+
+
+database schema
+ table - users
+    -username
+    <!-- -pw hash -->
+    -money
+    -character stats
+        -hp
+        -damage
+        -luck
+        -resistance
+        -crit%
+
+ table - enemies
+    -name
+    -hp
+    -damage
+    -resistance
+    -crit%
+    -value
+    <!-- specials -->

@@ -1,0 +1,1 @@
+sudo rm -r /var/rusty-dungeon/db
