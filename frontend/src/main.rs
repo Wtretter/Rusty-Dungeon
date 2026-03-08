@@ -1,28 +1,18 @@
 use std::str;
-use iced::widget::{button, column, text, text_input, Column};
+use iced::widget::{button, column, row, text, text_input, Space, Column};
 use iced::Task;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use std::sync::{Arc};
-use serde_json::{Result, Value, json};
+use serde_json::{json};
 
 type Connection = Arc<Mutex<TcpStream>>;
 const SERVER_ADDR: &str = "rustydungeon.wtretter.com:27010";
 
-#[derive(Debug, Clone)]
-enum Message {
-    Startup(()),
-    Increment,
-    Decrement,
-    AttemptLogin,
-    UsernameChanged(String),
-    ServerConnected(Option<Connection>),
-    DataSent(Option<()>),
-}
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 enum State {
     #[default] Startup=0000,
     Login=0001,
@@ -30,12 +20,25 @@ enum State {
     Run=0011,
 }
 
+#[derive(Debug, Clone)]
+enum Message {
+    Startup(()),
+    AttemptLogin,
+    Register,
+    StartRun,
+    RunFinished(Option<String>),
+    UsernameChanged(String),
+    ServerConnected(Option<Connection>),
+    DataSent(Option<State>),
+    BuyUpgrade(String),
+}
+
 #[derive(Default)]
 struct Application {
-    value: i64,
     connection: Option<Connection>,
     state: State,
     username: String,
+    text: String,
 }
 
 async fn initialize() -> Message {
@@ -73,7 +76,24 @@ async fn recv_uint16(conn: Connection) -> Option<u16>{
     return Some(uint16);
 }
 
-async fn send_message(conn: Connection, message: serde_json::Value) -> Option<()>{
+async fn send_message_get_json(conn: Connection, message: serde_json::Value) -> Option<String>{
+    {
+        let mut stream = conn.lock().await;
+
+        let string = message.to_string();
+
+        let len: u16 = string.len() as u16;
+        stream.write_u16(len).await.ok()?;
+
+        let mess_buffer = string.as_bytes();
+        stream.write_all(mess_buffer).await.ok()?;
+    }
+
+    let message_from_server = recv_message(conn.clone()).await?;
+    return Some(message_from_server);
+}
+
+async fn send_message_get_state(conn: Connection, message: serde_json::Value) -> Option<State>{
     {
         let mut stream = conn.lock().await;
 
@@ -89,17 +109,25 @@ async fn send_message(conn: Connection, message: serde_json::Value) -> Option<()
     let mess_recv = recv_uint16(conn.clone()).await?;
     println!("{}", mess_recv);
 
-    return Some(());
+
+    let state = match mess_recv {
+        1 => State::Login,
+        10 => State::Shop,
+        11 => State::Run,
+        _ => State::Startup,
+    };
+
+    return Some(state);
 }
 
 impl Application {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
-                value: 0,
                 connection: None,
                 state: State::Startup,
                 username: "".to_string(),
+                text: "".to_string(),
             },
             Task::future(initialize())
         )
@@ -119,27 +147,45 @@ impl Application {
                             "message_type": "login",
                             "username": self.username.to_string()
                         });
-                        return Task::perform(send_message(conn.clone(), json_message), Message::DataSent);
+                        return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
                     }
                     None => {
                         println!("No Connection");
                         self.state = State::Startup;
                         return Task::done(Message::Startup(()));
                     }
-                }            }
-            Message::Increment => {
-                self.value += 1;
+                }
+            }
+            Message::Register => {
                 match &mut self.connection {
                     Some(conn) => {
-                        
+                        let json_message = json!({
+                            "message_type": "register",
+                            "username": self.username.to_string()
+                        });
+                        return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
                     }
                     None => {
-                        println!("No Connection")
+                        println!("No Connection");
+                        self.state = State::Startup;
+                        return Task::done(Message::Startup(()));
                     }
                 }
             }
-            Message::Decrement => {
-                self.value -= 1;
+            Message::StartRun => {
+               match &mut self.connection {
+                    Some(conn) => {
+                        let json_message = json!({
+                            "message_type": "run",
+                        });
+                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::RunFinished);
+                    }
+                    None => {
+                        println!("No Connection");
+                        self.state = State::Startup;
+                        return Task::done(Message::Startup(()));
+                    }
+                }
             }
             Message::UsernameChanged(username) => {
                 self.username = username;
@@ -155,36 +201,76 @@ impl Application {
                 self.state = State::Startup;
                 return Task::perform(sleep(Duration::from_secs(5)), Message::Startup);
             }
-            Message::DataSent(Some(_)) => {}
-            
+            Message::DataSent(Some(state)) => {
+                self.state = state;
+            }
             Message::DataSent(None) => {
                 println!("data failed to send");
                 self.state = State::Startup;
                 return Task::done(Message::Startup(()));
+            }
+            Message::RunFinished(Some(data)) => {
+                self.text = data;
+                self.state = State::Run;
+            }
+            Message::RunFinished(None) => {
+                println!("data failed to send");
+                self.state = State::Startup;
+                return Task::done(Message::Startup(()));
+            }
+            Message::BuyUpgrade(string) => {
+                match &mut self.connection {
+                    Some(conn) => {
+                        let json_message = json!({
+                            "message_type": "buy",
+                            "upgrade": self.text.to_string()
+                        });
+                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::RunFinished);
+                    }
+                    None => {
+                        println!("No Connection");
+                        self.state = State::Startup;
+                        return Task::done(Message::Startup(()));
+                    }
+                }
             }
         }
         return Task::none();
     }
 
     fn view(&self) -> Column<'_, Message> {
-        // // The buttons
-        // let increment = button("+").on_press(Message::Increment);
-        // let decrement = button("-").on_press(Message::Decrement);
 
-        // // The number
-        // let counter = text(self.value);
-        // let username
-
-        // // The layout
         match self.state {
             State::Login => {
                 let username_box = text_input("username", &self.username).on_input(Message::UsernameChanged);
                 
                 let login_button = button("LOGIN").on_press(Message::AttemptLogin);
+
+                let register_button = button("REGISTER").on_press(Message::Register);
                 
-                let interface = column![username_box, login_button];
+                let interface = column![username_box, row![login_button, Space::new().width(4), register_button]];
                 return interface;
             }
+
+            State::Shop => {
+                let run_button = button("Start Run").on_press(Message::StartRun);
+                let upgrade_hp_button = button("+Hitpoints");
+
+
+                let interface = column![text("Shop"), row![upgrade_hp_button], run_button];
+            
+                return interface;    
+            }
+
+            State::Run => {
+                let return_button = button("Shop").on_press(Message::AttemptLogin);
+                let interface = column![text("Run"), Space::new().height(24), text(&self.text), return_button];
+
+                
+
+                return interface;
+            }
+
             _ => {
                 let interface = column![text("error")];
                 return interface;

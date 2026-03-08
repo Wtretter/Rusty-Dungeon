@@ -24,7 +24,7 @@
 
 CREATE TABLE users (
     id serial PRIMARY KEY,
-    username text, 
+    username text UNIQUE, 
     money integer, 
     hitpoints integer, 
     damage integer, 
