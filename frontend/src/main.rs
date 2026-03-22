@@ -26,20 +26,34 @@ enum Message {
     AttemptLogin,
     Register,
     StartRun,
+    BuyHP,
+    PlayerUpdated(Option<String>),
     RunFinished(Option<String>),
     UsernameChanged(String),
     ServerConnected(Option<Connection>),
     DataSent(Option<State>),
-    BuyUpgrade(String),
+    
+}
+
+#[derive(Default)]
+struct Player {
+    username: String,
+	money: u32,
+	hitpoints: u32,
+	damage: u32,
+	luck: u32,
+	resistance: u32,
+	crit: u32,
 }
 
 #[derive(Default)]
 struct Application {
     connection: Option<Connection>,
     state: State,
-    username: String,
     text: String,
+    player: Player,
 }
+
 
 async fn initialize() -> Message {
     return Message::Startup(());
@@ -126,8 +140,16 @@ impl Application {
             Self {
                 connection: None,
                 state: State::Startup,
-                username: "".to_string(),
                 text: "".to_string(),
+                player: Player{
+                    username: "".to_string(),
+                    money: 0,
+                    hitpoints: 0,
+                    damage: 0,
+                    luck: 0,
+                    resistance: 0,
+                    crit: 0,
+                }
             },
             Task::future(initialize())
         )
@@ -145,7 +167,7 @@ impl Application {
                     Some(conn) => {
                         let json_message = json!({
                             "message_type": "login",
-                            "username": self.username.to_string()
+                            "username": self.player.username.to_string()
                         });
                         return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
                     }
@@ -161,7 +183,7 @@ impl Application {
                     Some(conn) => {
                         let json_message = json!({
                             "message_type": "register",
-                            "username": self.username.to_string()
+                            "username": self.player.username.to_string()
                         });
                         return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
                     }
@@ -188,7 +210,7 @@ impl Application {
                 }
             }
             Message::UsernameChanged(username) => {
-                self.username = username;
+                self.player.username = username;
             }
             Message::ServerConnected(Some(conn)) => {
                 self.connection = Some(conn);
@@ -218,14 +240,23 @@ impl Application {
                 self.state = State::Startup;
                 return Task::done(Message::Startup(()));
             }
-            Message::BuyUpgrade(string) => {
+            Message::PlayerUpdated(Some(data)) => {
+                println!("{}", data);
+                return Task::done(Message::Startup(()))
+            }
+            Message::PlayerUpdated(None) => {
+                println!("no response from server");
+                self.state = State::Startup;
+                return Task::done(Message::Startup(()));
+            }
+            Message::BuyHP => {
                 match &mut self.connection {
                     Some(conn) => {
                         let json_message = json!({
                             "message_type": "buy",
-                            "upgrade": self.text.to_string()
+                            "upgrade": "hitpoints"
                         });
-                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::RunFinished);
+                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::PlayerUpdated);
                     }
                     None => {
                         println!("No Connection");
@@ -242,7 +273,7 @@ impl Application {
 
         match self.state {
             State::Login => {
-                let username_box = text_input("username", &self.username).on_input(Message::UsernameChanged);
+                let username_box = text_input("username", &self.player.username).on_input(Message::UsernameChanged);
                 
                 let login_button = button("LOGIN").on_press(Message::AttemptLogin);
 
@@ -254,7 +285,7 @@ impl Application {
 
             State::Shop => {
                 let run_button = button("Start Run").on_press(Message::StartRun);
-                let upgrade_hp_button = button("+Hitpoints");
+                let upgrade_hp_button = button("+Hitpoints").on_press(Message::BuyHP);
 
 
                 let interface = column![text("Shop"), row![upgrade_hp_button], run_button];

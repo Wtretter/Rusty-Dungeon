@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -57,6 +58,10 @@ type RunRecord struct {
 	Fights []FightRecord
 }
 
+var ErrOutOfMoney = errors.New("no money")
+
+var ErrInvalidInput = errors.New("invalid input")
+
 func (player *Player) PrintStats() {
 	fmt.Println(
 		"Stats:",
@@ -76,6 +81,28 @@ func (player *Player) Save(db *sql.DB) error {
 		player.Username, player.Money, player.Hitpoints, player.Damage, player.Luck, player.Resistance, player.Crit, player.Id,
 	)
 	return err
+}
+
+func (player *Player) Buy(db *sql.DB, upgrade string) error {
+	if player.Money <= 0 {
+		return ErrOutOfMoney
+	}
+	if upgrade == "hitpoints" {
+		player.Hitpoints += 1
+	} else if upgrade == "damage" {
+		player.Damage += 1
+	} else if upgrade == "luck" {
+		player.Luck += 1
+	} else if upgrade == "resistance" {
+		player.Resistance += 1
+	} else if upgrade == "crit" {
+		player.Crit += 1
+	} else {
+		return ErrInvalidInput
+	}
+	player.Money -= 1
+	player.Save(db)
+	return nil
 }
 
 func (player *Player) Fight(enemy Enemy) FightRecord {
@@ -198,6 +225,18 @@ func handler(connection net.Conn, db *sql.DB) {
 			player.PrintStats()
 
 			state = StateShop
+		}
+
+		if message_type == "buy" {
+			upgrade := data["upgrade"].(string)
+			player.Buy(db, upgrade)
+			player_obj, err := json.Marshal(player)
+			if err != nil {
+				fmt.Println("couldnt JSON the player_obj", err)
+				break
+			}
+			player_obj_string := string(player_obj)
+			send_string(connection, player_obj_string)
 		}
 
 		if message_type == "register" {
