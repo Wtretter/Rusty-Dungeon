@@ -1,5 +1,5 @@
 use std::str;
-use iced::widget::{button, column, row, text, text_input, Space, Column};
+use iced::widget::{button, scrollable, column, row, text, text_input, Space, Column};
 use iced::Task;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -7,17 +7,21 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use std::sync::{Arc};
 use serde_json::{json};
+use serde::{Deserialize, Serialize};
+use iced::Length;
+use iced::Size;
+use iced::window::Settings;
 
 type Connection = Arc<Mutex<TcpStream>>;
 const SERVER_ADDR: &str = "rustydungeon.wtretter.com:27010";
 
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 enum State {
-    #[default] Startup=0000,
-    Login=0001,
-    Shop=0010,
-    Run=0011,
+    #[default] Startup=0,
+    Login=1,
+    Shop=10,
+    Run=11,
 }
 
 #[derive(Debug, Clone)]
@@ -30,12 +34,10 @@ enum Message {
     PlayerUpdated(Option<String>),
     RunFinished(Option<String>),
     UsernameChanged(String),
-    ServerConnected(Option<Connection>),
-    DataSent(Option<State>),
-    
+    ServerConnected(Option<Connection>),    
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Player {
     username: String,
 	money: u32,
@@ -44,12 +46,12 @@ struct Player {
 	luck: u32,
 	resistance: u32,
 	crit: u32,
+    state: State,
 }
 
 #[derive(Default)]
 struct Application {
     connection: Option<Connection>,
-    state: State,
     text: String,
     player: Player,
 }
@@ -107,39 +109,11 @@ async fn send_message_get_json(conn: Connection, message: serde_json::Value) -> 
     return Some(message_from_server);
 }
 
-async fn send_message_get_state(conn: Connection, message: serde_json::Value) -> Option<State>{
-    {
-        let mut stream = conn.lock().await;
-
-        let string = message.to_string();
-
-        let len: u16 = string.len() as u16;
-        stream.write_u16(len).await.ok()?;
-
-        let mess_buffer = string.as_bytes();
-        stream.write_all(mess_buffer).await.ok()?;
-    }
-
-    let mess_recv = recv_uint16(conn.clone()).await?;
-    println!("{}", mess_recv);
-
-
-    let state = match mess_recv {
-        1 => State::Login,
-        10 => State::Shop,
-        11 => State::Run,
-        _ => State::Startup,
-    };
-
-    return Some(state);
-}
-
 impl Application {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
                 connection: None,
-                state: State::Startup,
                 text: "".to_string(),
                 player: Player{
                     username: "".to_string(),
@@ -149,6 +123,7 @@ impl Application {
                     luck: 0,
                     resistance: 0,
                     crit: 0,
+                    state: State::Startup,
                 }
             },
             Task::future(initialize())
@@ -169,11 +144,11 @@ impl Application {
                             "message_type": "login",
                             "username": self.player.username.to_string()
                         });
-                        return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
+                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::PlayerUpdated);
                     }
                     None => {
                         println!("No Connection");
-                        self.state = State::Startup;
+                        self.player.state = State::Startup;
                         return Task::done(Message::Startup(()));
                     }
                 }
@@ -185,11 +160,11 @@ impl Application {
                             "message_type": "register",
                             "username": self.player.username.to_string()
                         });
-                        return Task::perform(send_message_get_state(conn.clone(), json_message), Message::DataSent);
+                        return Task::perform(send_message_get_json(conn.clone(), json_message), Message::PlayerUpdated);
                     }
                     None => {
                         println!("No Connection");
-                        self.state = State::Startup;
+                        self.player.state = State::Startup;
                         return Task::done(Message::Startup(()));
                     }
                 }
@@ -204,7 +179,7 @@ impl Application {
                     }
                     None => {
                         println!("No Connection");
-                        self.state = State::Startup;
+                        self.player.state = State::Startup;
                         return Task::done(Message::Startup(()));
                     }
                 }
@@ -215,38 +190,31 @@ impl Application {
             Message::ServerConnected(Some(conn)) => {
                 self.connection = Some(conn);
                 println!("Connection succeeded!");
-                self.state = State::Login;
+                self.player.state = State::Login;
             }
             Message::ServerConnected(None) => {
                 println!("Connection failed!");
                 
-                self.state = State::Startup;
+                self.player.state = State::Startup;
                 return Task::perform(sleep(Duration::from_secs(5)), Message::Startup);
-            }
-            Message::DataSent(Some(state)) => {
-                self.state = state;
-            }
-            Message::DataSent(None) => {
-                println!("data failed to send");
-                self.state = State::Startup;
-                return Task::done(Message::Startup(()));
             }
             Message::RunFinished(Some(data)) => {
                 self.text = data;
-                self.state = State::Run;
+                self.player.state = State::Run;
             }
             Message::RunFinished(None) => {
                 println!("data failed to send");
-                self.state = State::Startup;
+                self.player.state = State::Startup;
                 return Task::done(Message::Startup(()));
             }
             Message::PlayerUpdated(Some(data)) => {
                 println!("{}", data);
-                return Task::done(Message::Startup(()))
+                self.player = serde_json::from_str(data.as_str()).expect("server sent invalid player obj");
+
             }
             Message::PlayerUpdated(None) => {
                 println!("no response from server");
-                self.state = State::Startup;
+                self.player.state = State::Startup;
                 return Task::done(Message::Startup(()));
             }
             Message::BuyHP => {
@@ -260,7 +228,7 @@ impl Application {
                     }
                     None => {
                         println!("No Connection");
-                        self.state = State::Startup;
+                        self.player.state = State::Startup;
                         return Task::done(Message::Startup(()));
                     }
                 }
@@ -271,7 +239,7 @@ impl Application {
 
     fn view(&self) -> Column<'_, Message> {
 
-        match self.state {
+        match self.player.state {
             State::Login => {
                 let username_box = text_input("username", &self.player.username).on_input(Message::UsernameChanged);
                 
@@ -286,16 +254,27 @@ impl Application {
             State::Shop => {
                 let run_button = button("Start Run").on_press(Message::StartRun);
                 let upgrade_hp_button = button("+Hitpoints").on_press(Message::BuyHP);
-
-
-                let interface = column![text("Shop"), row![upgrade_hp_button], run_button];
+                let interface = column![
+                    text("Shop"),
+                    row![
+                        column![
+                            text(format!("Funds: {}", self.player.money))
+                        ],
+                        Space::new().width(Length::Fill),
+                        column![
+                            upgrade_hp_button
+                        ]
+                    ],
+                    run_button
+                ];
+                
             
                 return interface;    
             }
 
             State::Run => {
                 let return_button = button("Shop").on_press(Message::AttemptLogin);
-                let interface = column![text("Run"), Space::new().height(24), text(&self.text), return_button];
+                let interface = column![text("Run"), Space::new().height(24), scrollable(text(&self.text)).height(500), return_button];
 
                 
 
@@ -311,5 +290,5 @@ impl Application {
 }
 
 pub fn main() -> iced::Result {
-    iced::application(Application::new, Application::update, Application::view).run()
+    iced::application(Application::new, Application::update, Application::view).window(Settings{min_size:Some(Size{width: 80.0, height: 40.0}), ..Default::default()}).run()
 }

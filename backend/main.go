@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	StateStartup = 0
-	StateLogin   = 1
-	StateShop    = 10
-	StateRun     = 11
+	StateStartup = "Startup"
+	StateLogin   = "Login"
+	StateShop    = "Shop"
+	StateRun     = "Run"
 )
 
 type Enemy struct {
@@ -31,14 +31,15 @@ type Enemy struct {
 }
 
 type Player struct {
-	Id         int
-	Username   string
-	Money      int
-	Hitpoints  int
-	Damage     int
-	Luck       int
-	Resistance int
-	Crit       int
+	Id         int    `json:"id"`
+	Username   string `json:"username"`
+	Money      int    `json:"money"`
+	Hitpoints  int    `json:"hitpoints"`
+	Damage     int    `json:"damage"`
+	Luck       int    `json:"luck"`
+	Resistance int    `json:"resistance"`
+	Crit       int    `json:"crit"`
+	State      string `json:"state"`
 }
 
 type DamageEvent struct {
@@ -179,7 +180,7 @@ func handler(connection net.Conn, db *sql.DB) {
 
 	var player Player
 
-	state := StateStartup
+	player.State = StateStartup
 
 	for {
 		message, err := recv_string(connection)
@@ -224,7 +225,7 @@ func handler(connection net.Conn, db *sql.DB) {
 
 			player.PrintStats()
 
-			state = StateShop
+			player.State = StateShop
 		}
 
 		if message_type == "buy" {
@@ -237,6 +238,7 @@ func handler(connection net.Conn, db *sql.DB) {
 			}
 			player_obj_string := string(player_obj)
 			send_string(connection, player_obj_string)
+			continue
 		}
 
 		if message_type == "register" {
@@ -251,7 +253,7 @@ func handler(connection net.Conn, db *sql.DB) {
 				fmt.Println("registration error:", err)
 				return
 			}
-			state = StateShop
+			player.State = StateShop
 		}
 
 		if message_type == "run" {
@@ -295,11 +297,13 @@ func handler(connection net.Conn, db *sql.DB) {
 			continue
 		}
 
-		err = send_uint16(connection, uint16(state))
+		player_obj, err := json.Marshal(player)
 		if err != nil {
-			fmt.Println("Send failed, err:", err)
-			return
+			fmt.Println("couldnt JSON the player_obj", err)
+			break
 		}
+		player_obj_string := string(player_obj)
+		send_string(connection, player_obj_string)
 	}
 }
 
